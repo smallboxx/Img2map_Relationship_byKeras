@@ -1,54 +1,92 @@
 import tensorflow as tf
 import numpy as np
 import os
+from model import trackmodel
 
-class CustomDataset(tf.data.Dataset):
+class trackDataset(tf.data.Dataset):
     def __init__(self, datas):
         self.length = len(datas)
         self.datas  = datas
+        self.index = 0
 
     def __len__(self):
         return self.length
 
     def __getitem__(self, idx):
-        #img_path,rectlabel_path,coordinate_path=datas[idx]
+
         # load img
+        idx = self.index
         image1 = self.load_image(self.datas[idx][0])
         image2 = self.load_image(self.datas[idx+1][0])
         image3 = self.load_image(self.datas[idx+2][0])
         image4 = self.load_image(self.datas[idx+3][0])
 
         # load label
-        label1 = self.load_label(self.datas[idx][1])
-        label2 = self.load_label(self.datas[idx+1][1])
-        label3 = self.load_label(self.datas[idx+2][1])
-        label4 = self.load_label(self.datas[idx+3][1])
         label_map = self.load_label(self.datas[idx][2])
-        # 将四张图像和标签作为元组返回
+        label1 = self.load_imglabel(self.datas[idx][1],label_map)
+        label2 = self.load_imglabel(self.datas[idx+1][1],label_map)
+        label3 = self.load_imglabel(self.datas[idx+2][1],label_map)
+        label4 = self.load_imglabel(self.datas[idx+3][1],label_map)
         return (image1, image2, image3, image4, label1, label2, label3, label4, label_map)
 
     def load_image(self,imgpath):
         image = tf.io.read_file(imgpath)
         image = tf.image.decode_jpeg(image, channels=3)
-        image = tf.image.resize(image,(225,400))
+        image = tf.image.resize(image,(400,400))
+        image = tf.expand_dims(image,axis=0)
         image = tf.cast(image, tf.float32) / 255.0
         return image
     
-    def load_label(self,labelpath):
-        labels= []
+    def load_imglabel(self,labelpath,maptensor):
+        num = len(maptensor)
+        tensor_label = np.zeros((num,4),dtype=np.float32)
         with open(labelpath,'r') as f:
             lines=f.readlines()
             for line in lines:
                 parts = line.strip().split(' ')
-                id    = parts[0]
+                id    = int(parts[0])
                 box   = np.array([float(x) for x in parts[1:]])
-                labels.append((id,box))
-        return  np.array(labels, dtype=object)
+                tensor_label[id][0]=box[0]
+                tensor_label[id][1]=box[1]
+                tensor_label[id][2]=box[2]
+                tensor_label[id][3]=box[3]
+        return  tf.constant(tensor_label)
+
+    def load_label(self,labelpath):
+        with open(labelpath,'r') as f:
+            lines=f.readlines()
+            num  = len(lines)
+            tensor_label = np.zeros((num,2),dtype=np.float32)
+            for line in lines:
+                parts = line.strip().split(' ')
+                id    = int(parts[0])
+                box   = np.array([float(x) for x in parts[1:]])
+                tensor_label[id][0]=box[0]
+                tensor_label[id][1]=box[1]
+        return  tf.constant(tensor_label)
+    
     
     def __iter__(self):
-        # 迭代数据集
-        for i in range(self.length//4):
-            yield self[i*4]
+        return self
+
+    def __next__(self):
+        if self.index >= self.length:
+            raise StopIteration
+        # load img
+        idx = self.index
+        image1 = self.load_image(self.datas[idx][0])
+        image2 = self.load_image(self.datas[idx+1][0])
+        image3 = self.load_image(self.datas[idx+2][0])
+        image4 = self.load_image(self.datas[idx+3][0])
+
+        # load label
+        label_map = self.load_label(self.datas[idx][2])
+        label1 = self.load_imglabel(self.datas[idx][1],label_map)
+        label2 = self.load_imglabel(self.datas[idx+1][1],label_map)
+        label3 = self.load_imglabel(self.datas[idx+2][1],label_map)
+        label4 = self.load_imglabel(self.datas[idx+3][1],label_map)
+        return (image1, image2, image3, image4, label1, label2, label3, label4, label_map)
+
     def _inputs(self):
         # 返回数据集的输入张量，这里返回一个元组，包含四张图像和标签
         return (tf.TensorSpec(shape=(None, None, 3), dtype=tf.float32),
@@ -89,70 +127,50 @@ if __name__=="__main__":
     img_path="data\\imgs"
     rectlabel_path="data\\annotations"
     coordinate_path="data\\aerlabel"
-
-    datas  = load_data(img_path,rectlabel_path,coordinate_path)
-    dataset= CustomDataset(datas)
-    # Define input layers
-    input1 = tf.keras.layers.Input(shape=(225, 400, 3))
-    input2 = tf.keras.layers.Input(shape=(225, 400, 3))
-    input3 = tf.keras.layers.Input(shape=(225, 400, 3))
-    input4 = tf.keras.layers.Input(shape=(225, 400, 3))
-    input5 = tf.keras.layers.Input(shape=(None,))
-    input6 = tf.keras.layers.Input(shape=(None,))
-    input7 = tf.keras.layers.Input(shape=(None,))
-    input8 = tf.keras.layers.Input(shape=(None,))
-
-    # Define convolutional layers
-    conv1 = tf.keras.layers.Conv2D(32, (3, 3), activation='relu')
-    conv2 = tf.keras.layers.Conv2D(64, (3, 3), activation='relu')
-
-    # Define flatten and dense layers
-    flatten = tf.keras.layers.Flatten()
-    dense1 = tf.keras.layers.Dense(128, activation='relu')
-    dense2 = tf.keras.layers.Dense(3, activation=None)
-
-    # Process input1
-    x1 = conv2(conv1(input1))
-    x1 = flatten(x1)
-    x1 = dense1(x1)
-
-    # Process input2
-    x2 = conv2(conv1(input2))
-    x2 = flatten(x2)
-    x2 = dense1(x2)
-
-    # Process input3
-    x3 = conv2(conv1(input3))
-    x3 = flatten(x3)
-    x3 = dense1(x3)
-
-    # Process input4
-    x4 = conv2(conv1(input4))
-    x4 = flatten(x4)
-    x4 = dense1(x4)
-
-    # Concatenate the four feature vectors
-    x = tf.keras.layers.concatenate([x1, x2, x3, x4])
-
-    # Predict the label_map
-    label_map = dense2(x)
-
-    # Define the model inputs and outputs
-    model_inputs = [input1, input2, input3, input4, input5, input6, input7, input8]
-    model_outputs = [label_map]
-
-    # Define the model
-    model = tf.keras.models.Model(inputs=model_inputs, outputs=model_outputs)
-
-    # Define the loss function and optimizer
-    loss_fn = tf.keras.losses.MeanSquaredError()
+    data   = load_data(img_path,rectlabel_path,coordinate_path)
+    dataset= trackDataset(data)
+    model  = trackmodel()
     optimizer = tf.keras.optimizers.Adam()
+    loss_fn   = tf.keras.losses.MeanSquaredError()
+    for epoch in range(3):
+        for temp_slice in dataset:
+            Map_y = temp_slice[8]
+            for id in range(len(Map_y)):
+                y = Map_y[id]
+                image_label1 = tf.expand_dims(temp_slice[4][id],axis=0)
+                image_label2 = tf.expand_dims(temp_slice[5][id],axis=0)
+                image_label3 = tf.expand_dims(temp_slice[6][id],axis=0)
+                image_label4 = tf.expand_dims(temp_slice[7][id],axis=0)
+                image_label  = tf.expand_dims(tf.expand_dims(tf.concat([image_label1,image_label2,image_label3,image_label4],axis=0),axis=0),axis=-1)
+                inputs = (temp_slice[0], temp_slice[1], temp_slice[2], temp_slice[3], image_label)
+                with tf.GradientTape() as tape:
+                    y_pred = model(inputs)
+                    y_pred = tf.squeeze(y_pred, axis=0)
+                    loss   = loss_fn(y, y_pred)
+                grads = tape.gradient(loss, model.trainable_weights)
+                optimizer.apply_gradients(zip(grads, model.trainable_weights))
+            print("Epoch:", epoch,"Loss:", float(loss))
 
-    # Compile the model
-    model.compile(optimizer=optimizer, loss=loss_fn)
+        # # 计算验证损失
+        # val_losses = []
+        # for temp_slice in val_dataset:
+        #     Map_y = temp_slice[8]
+        #     for id in range(len(Map_y)):
+        #         y = Map_y[id]
+        #         image_label1 = tf.expand_dims(temp_slice[4][id],axis=0)
+        #         image_label2 = tf.expand_dims(temp_slice[5][id],axis=0)
+        #         image_label3 = tf.expand_dims(temp_slice[6][id],axis=0)
+        #         image_label4 = tf.expand_dims(temp_slice[7][id],axis=0)
+        #         image_label  = tf.expand_dims(tf.expand_dims(tf.concat([image_label1,image_label2,image_label3,image_label4],axis=0),axis=0),axis=-1)
+        #         inputs = (temp_slice[0], temp_slice[1], temp_slice[2], temp_slice[3], image_label)
+        #         y_pred = model(inputs)
+        #         y_pred = tf.squeeze(y_pred, axis=0)
+        #         val_loss = loss_fn(y, y_pred)
+        #         val_losses.append(val_loss)
+        #     mean_val_loss = tf.reduce_mean(val_losses)
+        #     print("Epoch:", epoch, "Validation Loss:", float(mean_val_loss))
 
-    # Train the model
-    model.fit(dataset, epochs=1)
-
-    # Save the weights
-    model.save_weights('my_model_weights.h5')
+# 保存模型的权重参数
+model.save_weights('my_model_weights.h5')
+# 保存整个模型
+model.save('my_model.h5')
